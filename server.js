@@ -10,7 +10,7 @@ app.use(cors());
 const PORT = 3000;
 const API_URL = "https://api.upgrader.com/affiliate/creator/get-stats";
 const API_KEY = "9c0cfe22-0028-48a5-badd-1ba6663a481a";
-const MONGO_URI = "mongodb://localhost:27017/leaderboardDB";
+const MONGO_URI = "mongodb+srv://aids:aids@aidsgamble.run0e.mongodb.net/?retryWrites=true&w=majority&appName=aidsgamble";
 
 // Connect to MongoDB
 mongoose
