@@ -6,14 +6,7 @@ const cors = require("cors");
 
 const app = express();
 
-app.use(
-  cors({
-    origin: "https://hollowrewards.com", // Replace with your frontend URL
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true, // Allow credentials (cookies, authorization headers, etc.)
-  })
-);
+app.use(cors());
 
 
 
