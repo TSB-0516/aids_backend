@@ -5,13 +5,16 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 
 const app = express();
+
 app.use(
   cors({
-    origin: "*", // Change "*" to your frontend domain if needed
-    methods: "GET, POST",
-    allowedHeaders: "Content-Type, Authorization",
+    origin: "https://hollowrewards.com", // Replace with your frontend URL
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true, // Allow credentials (cookies, authorization headers, etc.)
   })
 );
+
 
 
 const PORT = 3000;
