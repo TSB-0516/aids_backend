@@ -10,7 +10,8 @@ app.use(cors());
 const PORT = 3000;
 const API_URL = "https://api.upgrader.com/affiliate/creator/get-stats";
 const API_KEY = "9c0cfe22-0028-48a5-badd-1ba6663a481a";
-const MONGO_URI = "mongodb+srv://aids:aids@aidsgamble.run0e.mongodb.net/?retryWrites=true&w=majority&appName=aidsgamble";
+const MONGO_URI =
+  "mongodb+srv://aids:aids@aidsgamble.run0e.mongodb.net/?retryWrites=true&w=majority&appName=aidsgamble";
 
 // Connect to MongoDB
 mongoose
@@ -21,7 +22,7 @@ mongoose
 // Define Mongoose Schema & Models
 const LeaderboardSchema = new mongoose.Schema({
   countdownEndTime: Number,
-  summarizedBets: [{ username: String, wager: Number }],
+  summarizedBets: [{ username: String, wager: Number, avatar: String }],
 });
 const Leaderboard = mongoose.model("Leaderboard", LeaderboardSchema);
 
@@ -56,18 +57,27 @@ const fetchData = async () => {
 
     if (!response.data.error) {
       console.log("Data fetched successfully");
+
       let summarizedBetsData = response.data.data.summarizedBets || [];
+
+      // Transform data structure
       summarizedBetsData = summarizedBetsData.map((bet) => ({
-        ...bet,
-        wager: (bet.wager / 100).toFixed(2),
+        username: bet.user.username,
+        avatar: bet.user.avatar,
+        wager: (bet.wager / 100).toFixed(2), // Convert cents to dollars
       }));
+
+      // Sort by wager descending
       summarizedBetsData.sort((a, b) => b.wager - a.wager);
 
-      await Leaderboard.deleteMany({}); // Clear previous data
+      // Clear previous data and insert new leaderboard
+      await Leaderboard.deleteMany({});
       await Leaderboard.create({
         countdownEndTime,
         summarizedBets: summarizedBetsData,
       });
+
+      console.log("Leaderboard updated in database.");
     } else {
       console.error("API error:", response.data.msg);
     }
@@ -88,12 +98,10 @@ const archiveLeaderboard = async () => {
     });
 
     if (existingArchive) {
-      // Update existing archived leaderboard
       existingArchive.summarizedBets = latestLeaderboard.summarizedBets;
       await existingArchive.save();
       console.log("Archived leaderboard updated.");
     } else {
-      // Create a new archived leaderboard entry
       await ArchivedLeaderboard.create(latestLeaderboard.toObject());
       console.log("New archived leaderboard created.");
     }
@@ -122,17 +130,31 @@ setInterval(fetchData, 360000);
 
 // API Endpoints
 app.get("/leaderboard", async (req, res) => {
-  const leaderboard = await Leaderboard.findOne();
+  const leaderboard = await Leaderboard.findOne().lean(); // Convert to plain object
+
   if (leaderboard) {
-    res.json(leaderboard);
+    res.json({
+      countdownEndTime: leaderboard.countdownEndTime,
+      summarizedBets: leaderboard.summarizedBets
+        .slice(0, 10)
+        .map(({ _id, ...bet }) => bet), // Remove _id
+    });
   } else {
     res.status(404).json({ error: "Leaderboard not found" });
   }
 });
 
 app.get("/previous-leaderboards", async (req, res) => {
-  const archived = await ArchivedLeaderboard.find();
-  res.json(archived);
+  const archived = await ArchivedLeaderboard.find().lean(); // Convert to plain object
+
+  const formattedArchived = archived.map((entry) => ({
+    countdownEndTime: entry.countdownEndTime,
+    summarizedBets: entry.summarizedBets
+      .slice(0, 10)
+      .map(({ _id, ...bet }) => bet), // Remove _id
+  }));
+
+  res.json(formattedArchived);
 });
 
 app.listen(PORT, () => {
