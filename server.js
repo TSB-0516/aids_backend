@@ -5,7 +5,14 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin: "*", // Change "*" to your frontend domain if needed
+    methods: "GET, POST",
+    allowedHeaders: "Content-Type, Authorization",
+  })
+);
+
 
 const PORT = 3000;
 const API_URL = "https://api.upgrader.com/affiliate/creator/get-stats";
