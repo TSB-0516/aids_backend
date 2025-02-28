@@ -31,38 +31,33 @@ const ArchivedLeaderboard = mongoose.model(
   LeaderboardSchema
 );
 
-// Get the last Friday midnight UTC
-const getLastFridayMidnightUTC = () => {
-  let now = new Date();
-  let lastFriday = new Date(now);
-  let daysSinceLastFriday = (now.getUTCDay() - 5 + 7) % 7;
-  lastFriday.setUTCDate(now.getUTCDate() - daysSinceLastFriday);
-  lastFriday.setUTCHours(0, 0, 0, 0);
-  return lastFriday.getTime();
-};
-
-// Get the next Friday midnight UTC
+// Changed from Saturday to Friday
 const getNextFridayMidnightUTC = () => {
   let now = new Date();
   let nextFriday = new Date(now);
-  let daysUntilFriday = (5 - now.getUTCDay() + 7) % 7 || 7;
+  let daysUntilFriday = (5 - now.getUTCDay() + 7) % 7;  // Remove the || 7 to handle current Friday correctly
   nextFriday.setUTCDate(now.getUTCDate() + daysUntilFriday);
   nextFriday.setUTCHours(0, 0, 0, 0);
   return nextFriday.getTime();
 };
 
 // Fetch and store leaderboard data in MongoDB
-const fetchData = async () => {
+const fetchData = async (isReset = false) => {
   try {
     const countdownEndTime = getNextFridayMidnightUTC();
-    // Calculate fromDate as the last Friday midnight UTC
-    const fromDate = new Date(getLastFridayMidnightUTC());
+    
+    // If it's a reset, we want to start fresh from the current time
+    // If not a reset, we look back to the previous Friday
+    const fromDate = isReset 
+      ? new Date() // Start from current time after reset
+      : new Date(countdownEndTime - 7 * 24 * 60 * 60 * 1000); // Look back to previous Friday
+
     const toDate = new Date();
 
-    console.log('Fetching data with params:', {
-      fromDate: fromDate.toISOString(),
-      toDate: toDate.toISOString(),
-      countdownEndTime: new Date(countdownEndTime).toISOString()
+    console.log('Fetching data with range:', {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      isReset: isReset
     });
 
     const payload = {
@@ -70,28 +65,20 @@ const fetchData = async () => {
       from: fromDate.toISOString().split("T")[0],
       to: toDate.toISOString().split("T")[0],
     };
-
-    console.log('Making API request with payload:', payload);
+    
     const response = await axios.post(API_URL, payload);
 
     if (!response.data.error) {
-      console.log("Data fetched successfully:", response.data);
-
+      console.log("Data fetched successfully");
       let summarizedBetsData = response.data.data.summarizedBets || [];
-      console.log('Raw summarized bets:', summarizedBetsData);
-
-      if (summarizedBetsData.length === 0) {
-        console.log('Warning: No bets data received from API');
-      }
+      console.log(`Received ${summarizedBetsData.length} bets from API`);
 
       // Transform data structure
       summarizedBetsData = summarizedBetsData.map((bet) => ({
         username: bet.user.username,
         avatar: bet.user.avatar,
-        wager: parseFloat((bet.wager / 100).toFixed(2)), // Convert cents to dollars and ensure number type
+        wager: parseFloat((bet.wager / 100).toFixed(2)), // Ensure wager is a number
       }));
-
-      console.log('Transformed bets data:', summarizedBetsData);
 
       // Sort by wager descending
       summarizedBetsData.sort((a, b) => b.wager - a.wager);
@@ -103,16 +90,18 @@ const fetchData = async () => {
         summarizedBets: summarizedBetsData,
       });
 
-      console.log("Leaderboard updated in database:", newLeaderboard);
+      console.log(`Leaderboard updated with ${summarizedBetsData.length} entries, next reset at ${new Date(countdownEndTime).toISOString()}`);
+      return newLeaderboard;
     } else {
       console.error("API error:", response.data);
+      return null;
     }
   } catch (error) {
-    console.error("Error fetching data:", {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status
-    });
+    console.error("Error fetching data:", error.message);
+    if (error.response) {
+      console.error("API Response Error Data:", error.response.data);
+    }
+    return null;
   }
 };
 
@@ -121,36 +110,25 @@ const archiveLeaderboard = async () => {
   try {
     const latestLeaderboard = await Leaderboard.findOne();
     if (!latestLeaderboard) {
-      console.log("No leaderboard found to archive");
+      console.log("No leaderboard to archive");
       return;
     }
 
-    // Get the last Friday midnight for proper archiving
-    const lastFridayMidnight = getLastFridayMidnightUTC();
-    
-    // Create archive with the correct timestamp
-    const archiveData = {
-      ...latestLeaderboard.toObject(),
-      countdownEndTime: lastFridayMidnight
-    };
+    console.log("Archiving leaderboard for period ending:", new Date(latestLeaderboard.countdownEndTime).toISOString());
 
-    // Check if an archived leaderboard already exists for this period
+    // Check if an archived leaderboard already exists for this countdownEndTime
     const existingArchive = await ArchivedLeaderboard.findOne({
-      countdownEndTime: lastFridayMidnight
+      countdownEndTime: latestLeaderboard.countdownEndTime,
     });
 
     if (existingArchive) {
-      existingArchive.summarizedBets = archiveData.summarizedBets;
+      existingArchive.summarizedBets = latestLeaderboard.summarizedBets;
       await existingArchive.save();
-      console.log("Archived leaderboard updated for timestamp:", new Date(lastFridayMidnight).toISOString());
+      console.log("Updated existing archive");
     } else {
-      await ArchivedLeaderboard.create(archiveData);
-      console.log("New archived leaderboard created for timestamp:", new Date(lastFridayMidnight).toISOString());
+      await ArchivedLeaderboard.create(latestLeaderboard.toObject());
+      console.log("Created new archive");
     }
-
-    // Clear current leaderboard after archiving
-    await Leaderboard.deleteMany({});
-    console.log("Current leaderboard cleared after archiving");
   } catch (error) {
     console.error("Error archiving leaderboard:", error);
   }
@@ -158,24 +136,42 @@ const archiveLeaderboard = async () => {
 
 // Update auto-reset interval to use new timing function
 setInterval(async () => {
-  const now = Date.now();
-  const resetTime = getNextFridayMidnightUTC();
-  const lastReset = (await Leaderboard.findOne())?.countdownEndTime || 0;
-  
-  // Check if we're past the reset time and haven't reset yet
-  if (now >= resetTime && lastReset < resetTime) {
-    console.log("Starting reset process at:", new Date(now).toISOString());
-    console.log("Reset time was:", new Date(resetTime).toISOString());
-    console.log("Last reset was:", new Date(lastReset).toISOString());
-    
-    await archiveLeaderboard();
-    await fetchData();
-    console.log("Leaderboard reset and archived completed");
+  try {
+    const now = Date.now();
+    const resetTime = getNextFridayMidnightUTC();
+    const currentLeaderboard = await Leaderboard.findOne();
+    const lastResetTime = currentLeaderboard?.countdownEndTime || 0;
+
+    console.log('Checking reset status:', {
+      currentTime: new Date(now).toISOString(),
+      nextResetTime: new Date(resetTime).toISOString(),
+      lastResetTime: new Date(lastResetTime).toISOString(),
+      shouldReset: now >= resetTime && lastResetTime < resetTime
+    });
+
+    if (now >= resetTime && lastResetTime < resetTime) {
+      console.log("Starting reset process...");
+      await archiveLeaderboard();
+      const newLeaderboard = await fetchData(true); // true indicates this is a reset fetch
+      if (newLeaderboard) {
+        console.log("Reset completed successfully");
+      } else {
+        console.error("Reset completed but new data fetch failed");
+      }
+    }
+  } catch (error) {
+    console.error("Error in reset interval:", error);
   }
 }, 60000);
 
-// Fetch data every 6 minutes
-setInterval(fetchData, 360000);
+// Regular data fetch every minute instead of 6 minutes
+setInterval(async () => {
+  try {
+    await fetchData(false);
+  } catch (error) {
+    console.error("Error in fetch interval:", error);
+  }
+}, 60000);
 
 // API Endpoints
 app.get("/leaderboard", async (req, res) => {
@@ -206,14 +202,7 @@ app.get("/previous-leaderboards", async (req, res) => {
   res.json(formattedArchived);
 });
 
-// Immediately fetch data when server starts
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  try {
-    await mongoose.connection.db.admin().ping();
-    console.log("MongoDB connection verified");
-    await fetchData();
-  } catch (error) {
-    console.error("Error during startup:", error);
-  }
+  fetchData();
 });
