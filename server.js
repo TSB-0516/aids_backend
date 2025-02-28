@@ -35,7 +35,7 @@ const ArchivedLeaderboard = mongoose.model(
 const getNextFridayMidnightUTC = () => {
   let now = new Date();
   let nextFriday = new Date(now);
-  let daysUntilFriday = (5 - now.getUTCDay() + 7) % 7;  // Remove the || 7 to handle current Friday correctly
+  let daysUntilFriday = (5 - now.getUTCDay() + 7) % 7;
   nextFriday.setUTCDate(now.getUTCDate() + daysUntilFriday);
   nextFriday.setUTCHours(0, 0, 0, 0);
   return nextFriday.getTime();
@@ -46,12 +46,10 @@ const fetchData = async (isReset = false) => {
   try {
     const countdownEndTime = getNextFridayMidnightUTC();
     
-    // If it's a reset, we want to start fresh from the current time
-    // If not a reset, we look back to the previous Friday
+    // If it's a reset, start from current time, otherwise look back to previous Friday
     const fromDate = isReset 
-      ? new Date() // Start from current time after reset
-      : new Date(countdownEndTime - 7 * 24 * 60 * 60 * 1000); // Look back to previous Friday
-
+      ? new Date() 
+      : new Date(countdownEndTime - 7 * 24 * 60 * 60 * 1000);
     const toDate = new Date();
 
     console.log('Fetching data with range:', {
@@ -65,7 +63,7 @@ const fetchData = async (isReset = false) => {
       from: fromDate.toISOString().split("T")[0],
       to: toDate.toISOString().split("T")[0],
     };
-    
+
     const response = await axios.post(API_URL, payload);
 
     if (!response.data.error) {
@@ -73,18 +71,17 @@ const fetchData = async (isReset = false) => {
       let summarizedBetsData = response.data.data.summarizedBets || [];
       console.log(`Received ${summarizedBetsData.length} bets from API`);
 
-      // Transform data structure
+      // Transform data structure and ensure wager is a number
       summarizedBetsData = summarizedBetsData.map((bet) => ({
         username: bet.user.username,
         avatar: bet.user.avatar,
-        wager: parseFloat((bet.wager / 100).toFixed(2)), // Ensure wager is a number
+        wager: parseFloat((bet.wager / 100).toFixed(2)),
       }));
 
       // Sort by wager descending
       summarizedBetsData.sort((a, b) => b.wager - a.wager);
 
-      // Clear previous data and insert new leaderboard
-      await Leaderboard.deleteMany({});
+      // Create new leaderboard
       const newLeaderboard = await Leaderboard.create({
         countdownEndTime,
         summarizedBets: summarizedBetsData,
@@ -129,49 +126,57 @@ const archiveLeaderboard = async () => {
       await ArchivedLeaderboard.create(latestLeaderboard.toObject());
       console.log("Created new archive");
     }
+
+    // Clear the current leaderboard after successful archive
+    await Leaderboard.deleteMany({});
+    console.log("Current leaderboard cleared after archiving");
   } catch (error) {
     console.error("Error archiving leaderboard:", error);
   }
 };
 
-// Update auto-reset interval to use new timing function
-setInterval(async () => {
+// Combined interval for both reset checking and data fetching
+const updateInterval = async () => {
   try {
     const now = Date.now();
     const resetTime = getNextFridayMidnightUTC();
     const currentLeaderboard = await Leaderboard.findOne();
     const lastResetTime = currentLeaderboard?.countdownEndTime || 0;
 
-    console.log('Checking reset status:', {
+    console.log('Checking update/reset status:', {
       currentTime: new Date(now).toISOString(),
       nextResetTime: new Date(resetTime).toISOString(),
-      lastResetTime: new Date(lastResetTime).toISOString(),
-      shouldReset: now >= resetTime && lastResetTime < resetTime
+      lastResetTime: lastResetTime ? new Date(lastResetTime).toISOString() : 'No previous reset',
+      shouldReset: now >= resetTime && lastResetTime < resetTime,
+      nextUpdateIn: '5 minutes and 30 seconds'
     });
 
     if (now >= resetTime && lastResetTime < resetTime) {
       console.log("Starting reset process...");
       await archiveLeaderboard();
-      const newLeaderboard = await fetchData(true); // true indicates this is a reset fetch
+      const newLeaderboard = await fetchData(true); // Reset fetch
       if (newLeaderboard) {
-        console.log("Reset completed successfully");
+        console.log("Reset completed successfully with new data");
       } else {
         console.error("Reset completed but new data fetch failed");
       }
+    } else {
+      // Regular update
+      console.log("Starting regular update...");
+      await fetchData(false);
     }
   } catch (error) {
-    console.error("Error in reset interval:", error);
+    console.error("Error in update interval:", error);
   }
-}, 60000);
+};
 
-// Regular data fetch every minute instead of 6 minutes
-setInterval(async () => {
-  try {
-    await fetchData(false);
-  } catch (error) {
-    console.error("Error in fetch interval:", error);
-  }
-}, 60000);
+// Update interval set to 5 minutes and 30 seconds (330000 ms)
+const UPDATE_INTERVAL = 330000; // 5.5 minutes in milliseconds
+setInterval(updateInterval, UPDATE_INTERVAL);
+
+// Initial fetch when server starts
+console.log(`Server starting with update interval of 5 minutes and 30 seconds (${UPDATE_INTERVAL}ms)`);
+updateInterval().catch(error => console.error("Error in initial update:", error));
 
 // API Endpoints
 app.get("/leaderboard", async (req, res) => {
@@ -204,5 +209,5 @@ app.get("/previous-leaderboards", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  fetchData();
+  updateInterval().catch(error => console.error("Error in initial update:", error));
 });
